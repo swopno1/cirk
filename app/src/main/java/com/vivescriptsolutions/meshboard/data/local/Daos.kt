@@ -23,11 +23,17 @@ interface ProfileDao {
 
 @Dao
 interface MessageDao {
-    @Query("SELECT * FROM messages WHERE networkId = :networkId ORDER BY timestamp DESC LIMIT 2000")
+    @Query("SELECT * FROM messages WHERE networkId = :networkId ORDER BY priority ASC, timestamp DESC LIMIT 2000")
     fun getMessagesForNetwork(networkId: String): Flow<List<Message>>
+
+    @Query("SELECT * FROM messages WHERE networkId = :networkId AND expiresAt > :now ORDER BY priority ASC, timestamp DESC LIMIT 2000")
+    fun getActiveMessagesForNetwork(networkId: String, now: Long): Flow<List<Message>>
 
     @Query("SELECT * FROM messages WHERE messageId = :messageId LIMIT 1")
     suspend fun getMessageById(messageId: String): Message?
+
+    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE messageId = :messageId LIMIT 1)")
+    suspend fun hasMessage(messageId: String): Boolean
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertMessage(message: Message): Long
@@ -41,7 +47,7 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE networkId = :networkId AND messageId IN (:ids)")
     suspend fun getMessagesByIds(networkId: String, ids: List<String>): List<Message>
 
-    @Query("DELETE FROM messages WHERE timestamp < :cutoffTimestamp")
+    @Query("DELETE FROM messages WHERE timestamp < :cutoffTimestamp OR expiresAt < :cutoffTimestamp")
     suspend fun pruneOldMessages(cutoffTimestamp: Long): Int
 
     @Query("DELETE FROM messages WHERE networkId = :networkId AND messageId NOT IN (SELECT messageId FROM messages WHERE networkId = :networkId ORDER BY timestamp DESC LIMIT 2000)")
@@ -49,6 +55,9 @@ interface MessageDao {
 
     @Query("DELETE FROM messages WHERE networkId = :networkId")
     suspend fun clearMessagesForNetwork(networkId: String)
+
+    @Query("SELECT COUNT(*) FROM messages WHERE networkId = :networkId")
+    suspend fun getMessageCount(networkId: String): Int
 }
 
 @Dao
@@ -59,6 +68,15 @@ interface NetworkMetadataDao {
     @Query("SELECT * FROM network_metadata WHERE isActive = 1 LIMIT 1")
     fun observeActiveNetwork(): Flow<NetworkMetadata?>
 
+    @Query("SELECT * FROM network_metadata WHERE networkId = :networkId LIMIT 1")
+    suspend fun getNetworkById(networkId: String): NetworkMetadata?
+
+    @Query("SELECT * FROM network_metadata ORDER BY createdAt DESC")
+    fun observeAllNetworks(): Flow<List<NetworkMetadata>>
+
+    @Query("SELECT * FROM network_metadata ORDER BY createdAt DESC")
+    suspend fun getAllNetworks(): List<NetworkMetadata>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNetwork(network: NetworkMetadata)
 
@@ -67,6 +85,9 @@ interface NetworkMetadataDao {
 
     @Query("UPDATE network_metadata SET isActive = 0 WHERE networkId = :networkId")
     suspend fun deactivateNetwork(networkId: String)
+
+    @Query("UPDATE network_metadata SET isActive = 0")
+    suspend fun deactivateAllNetworks()
 
     @Query("DELETE FROM network_metadata WHERE networkId = :networkId")
     suspend fun deleteNetwork(networkId: String)
@@ -79,6 +100,9 @@ interface NodeAuthorizationDao {
 
     @Query("SELECT * FROM node_authorizations WHERE networkId = :networkId")
     suspend fun getApprovedNodes(networkId: String): List<NodeAuthorization>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM node_authorizations WHERE networkId = :networkId AND nodeId = :nodeId LIMIT 1)")
+    suspend fun isNodeAuthorized(networkId: String, nodeId: String): Boolean
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAuthorization(auth: NodeAuthorization)

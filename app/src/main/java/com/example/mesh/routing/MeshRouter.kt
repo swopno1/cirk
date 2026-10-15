@@ -49,6 +49,20 @@ class MeshRouter(
     private val _shutdownCountdown = MutableStateFlow<Int?>(null)
     val shutdownCountdown: StateFlow<Int?> = _shutdownCountdown.asStateFlow()
 
+    private val _lastPacketReceivedTime = MutableStateFlow(0L)
+    val lastPacketReceivedTime: StateFlow<Long> = _lastPacketReceivedTime.asStateFlow()
+
+    private val _pendingQueueCount = MutableStateFlow(0)
+    val pendingQueueCount: StateFlow<Int> = _pendingQueueCount.asStateFlow()
+
+    private val _isBatterySaverActive = MutableStateFlow(false)
+    val isBatterySaverActive: StateFlow<Boolean> = _isBatterySaverActive.asStateFlow()
+
+    private val _activeTransportType = MutableStateFlow("Bluetooth LE / Wi-Fi Direct")
+    val activeTransportType: StateFlow<String> = _activeTransportType.asStateFlow()
+
+    private var lastAlertTimestamp: Long = 0L
+
     var currentNetwork: NetworkInfo? = null
         private set
     var localNodeId: String = ""
@@ -189,16 +203,25 @@ class MeshRouter(
     }
 
     /**
-     * Publish a new message from the local device.
+     * Publish a new message from the local device to a specific channel.
      */
-    suspend fun publishMessage(text: String): MeshMessageEntity? {
+    suspend fun publishMessage(
+        text: String,
+        channelId: Int = MeshProtocol.CHANNEL_GENERAL,
+        locationUri: String? = null
+    ): MeshMessageEntity? {
         val net = currentNetwork ?: return null
         if (text.isBlank()) return null
 
+        // Channel 0 (#announcements) is strictly reserved for Host and authorized Relay Nodes
+        if (channelId == MeshProtocol.CHANNEL_ANNOUNCEMENTS && localRole == NodeRole.CLIENT) {
+            throw IllegalStateException("Only Host and Relay nodes can publish to #announcements")
+        }
+
         val packet = when (localRole) {
-            NodeRole.HOST -> MeshPacket.createHostAnnouncement(net.networkId, localNodeId, localDisplayName, text)
-            NodeRole.RELAY_NODE -> MeshPacket.createRelayAnnouncement(net.networkId, localNodeId, localDisplayName, text)
-            NodeRole.CLIENT -> MeshPacket.createClientPost(net.networkId, localNodeId, localDisplayName, text)
+            NodeRole.HOST -> MeshPacket.createHostAnnouncement(net.networkId, localNodeId, localDisplayName, text, channelId = channelId, locationUri = locationUri)
+            NodeRole.RELAY_NODE -> MeshPacket.createRelayAnnouncement(net.networkId, localNodeId, localDisplayName, text, channelId = channelId, locationUri = locationUri)
+            NodeRole.CLIENT -> MeshPacket.createClientPost(net.networkId, localNodeId, localDisplayName, text, channelId = channelId, locationUri = locationUri)
         }
 
         // Mark seen locally
@@ -212,6 +235,7 @@ class MeshRouter(
             senderRole = packet.senderRole,
             messageType = packet.messageType,
             priority = packet.priority,
+            channelId = packet.channelId,
             createdAt = packet.createdAt,
             receivedAt = System.currentTimeMillis(),
             expiresAt = packet.expiresAt,
@@ -219,6 +243,8 @@ class MeshRouter(
             currentHopCount = 0,
             text = packet.text,
             originGrant = packet.originGrant,
+            isAlert = packet.isAlert,
+            locationUri = packet.locationUri,
             deliveryStatus = MessageDeliveryStatus.CREATED_LOCALLY
         )
 
@@ -234,6 +260,92 @@ class MeshRouter(
         }
 
         return entity
+    }
+
+    /**
+     * Broadcast an urgent Community Assistance Alert with 15-minute rate-limiting.
+     */
+    suspend fun publishAssistanceAlert(
+        text: String,
+        locationUri: String? = null
+    ): MeshMessageEntity? {
+        val net = currentNetwork ?: return null
+        if (text.isBlank()) return null
+
+        val now = System.currentTimeMillis()
+        if (now - lastAlertTimestamp < 15 * 60 * 1000L && lastAlertTimestamp != 0L) {
+            val waitMinutes = ((15 * 60 * 1000L - (now - lastAlertTimestamp)) / 60000) + 1
+            throw IllegalStateException("Please wait $waitMinutes minute(s) before sending another assistance alert.")
+        }
+        lastAlertTimestamp = now
+
+        val packet = MeshPacket.createAssistanceAlert(
+            networkId = net.networkId,
+            senderId = localNodeId,
+            senderName = localDisplayName,
+            senderRole = localRole,
+            text = text,
+            locationUri = locationUri
+        )
+
+        markAsSeen(packet.messageId, net.networkId)
+
+        val entity = MeshMessageEntity(
+            messageId = packet.messageId,
+            networkId = net.networkId,
+            senderId = packet.senderId,
+            senderDisplayName = packet.senderDisplayName,
+            senderRole = packet.senderRole,
+            messageType = packet.messageType,
+            priority = packet.priority,
+            channelId = packet.channelId,
+            createdAt = packet.createdAt,
+            receivedAt = System.currentTimeMillis(),
+            expiresAt = packet.expiresAt,
+            hopLimit = packet.hopLimit,
+            currentHopCount = 0,
+            text = packet.text,
+            originGrant = packet.originGrant,
+            isAlert = true,
+            locationUri = packet.locationUri,
+            deliveryStatus = MessageDeliveryStatus.CREATED_LOCALLY
+        )
+
+        database.messageDao().insertMessage(entity)
+
+        val sent = transport.broadcastBytes(packet.toByteArray())
+        if (sent > 0) {
+            database.messageDao().updateDeliveryStatus(packet.messageId, MessageDeliveryStatus.FORWARDED_TO_PEERS)
+        } else {
+            enqueuePendingPacket(packet)
+        }
+
+        return entity
+    }
+
+    suspend fun pinMessage(messageId: String, channelId: Int) {
+        val net = currentNetwork ?: return
+        if (localRole == NodeRole.CLIENT) return
+        database.messageDao().clearPinnedInChannel(net.networkId, channelId)
+        database.messageDao().setPinnedStatus(messageId, true)
+    }
+
+    suspend fun unpinMessage(messageId: String) {
+        database.messageDao().setPinnedStatus(messageId, false)
+    }
+
+    suspend fun muteAuthor(authorId: String, authorName: String) {
+        database.mutedAuthorDao().muteAuthor(
+            com.example.data.model.MutedAuthorEntity(authorId = authorId, authorDisplayName = authorName)
+        )
+    }
+
+    suspend fun unmuteAuthor(authorId: String) {
+        database.mutedAuthorDao().unmuteAuthor(authorId)
+    }
+
+    fun setBatterySaverActive(active: Boolean) {
+        _isBatterySaverActive.value = active
     }
 
     /**
@@ -316,6 +428,9 @@ class MeshRouter(
             return
         }
 
+        // Update health telemetry
+        _lastPacketReceivedTime.value = System.currentTimeMillis()
+
         // 7. Insert message into local Room database
         val entity = MeshMessageEntity(
             messageId = packet.messageId,
@@ -325,6 +440,7 @@ class MeshRouter(
             senderRole = packet.senderRole,
             messageType = packet.messageType,
             priority = packet.priority,
+            channelId = packet.channelId,
             createdAt = packet.createdAt,
             receivedAt = System.currentTimeMillis(),
             expiresAt = packet.expiresAt,
@@ -332,11 +448,14 @@ class MeshRouter(
             currentHopCount = packet.currentHopCount,
             text = packet.text,
             originGrant = packet.originGrant,
+            isAlert = packet.isAlert,
+            locationUri = packet.locationUri,
             deliveryStatus = MessageDeliveryStatus.RECEIVED_FROM_NETWORK
         )
 
         val inserted = database.messageDao().insertMessage(entity)
-        if (inserted > 0 && packet.senderId != localNodeId) {
+        val isMuted = database.mutedAuthorDao().isMuted(packet.senderId)
+        if (inserted > 0 && packet.senderId != localNodeId && !isMuted) {
             // Trigger local notification
             onNewMessageDelivered?.invoke(entity)
         }

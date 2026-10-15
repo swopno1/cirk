@@ -6,7 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 /**
- * Main Room database for MeshBoard offline-first bulletin network.
+ * Room database abstract class managing offline store-and-forward bulletin board state.
  * Registers Profile, Message, NetworkMetadata, and NodeAuthorization entities.
  */
 @Database(
@@ -37,7 +37,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "meshboard_bulletin.db"
                 )
-                    .fallbackToDestructiveMigration(false)
+                    .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance

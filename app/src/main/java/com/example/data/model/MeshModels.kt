@@ -71,6 +71,7 @@ data class MeshMessageEntity(
     val senderRole: NodeRole,
     val messageType: String,
     val priority: Int,
+    val channelId: Int = 1,
     val createdAt: Long,
     val receivedAt: Long = System.currentTimeMillis(),
     val expiresAt: Long,
@@ -78,7 +79,21 @@ data class MeshMessageEntity(
     val currentHopCount: Int,
     val text: String,
     val originGrant: String? = null,
+    val isAlert: Boolean = false,
+    val isPinned: Boolean = false,
+    val locationUri: String? = null,
     val deliveryStatus: MessageDeliveryStatus = MessageDeliveryStatus.RECEIVED_FROM_NETWORK
+)
+
+/**
+ * Local client-side block/mute list for abusive or unwanted authors.
+ */
+@Entity(tableName = "muted_authors")
+data class MutedAuthorEntity(
+    @PrimaryKey
+    val authorId: String,
+    val authorDisplayName: String = "",
+    val mutedAt: Long = System.currentTimeMillis()
 )
 
 /**

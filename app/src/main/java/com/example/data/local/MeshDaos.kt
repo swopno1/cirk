@@ -6,8 +6,23 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface MessageDao {
-    @Query("SELECT * FROM mesh_messages WHERE networkId = :networkId ORDER BY createdAt DESC LIMIT 2000")
+    @Query("SELECT * FROM mesh_messages WHERE networkId = :networkId AND senderId NOT IN (SELECT authorId FROM muted_authors) ORDER BY createdAt DESC LIMIT 2000")
     fun getMessagesForNetwork(networkId: String): Flow<List<MeshMessageEntity>>
+
+    @Query("SELECT * FROM mesh_messages WHERE networkId = :networkId AND channelId = :channelId AND senderId NOT IN (SELECT authorId FROM muted_authors) ORDER BY createdAt DESC LIMIT 2000")
+    fun getMessagesForChannel(networkId: String, channelId: Int): Flow<List<MeshMessageEntity>>
+
+    @Query("SELECT * FROM mesh_messages WHERE networkId = :networkId AND channelId = :channelId AND isPinned = 1 ORDER BY createdAt DESC LIMIT 1")
+    fun getPinnedMessageForChannel(networkId: String, channelId: Int): Flow<MeshMessageEntity?>
+
+    @Query("UPDATE mesh_messages SET isPinned = :isPinned WHERE messageId = :messageId")
+    suspend fun setPinnedStatus(messageId: String, isPinned: Boolean)
+
+    @Query("UPDATE mesh_messages SET isPinned = 0 WHERE networkId = :networkId AND channelId = :channelId")
+    suspend fun clearPinnedInChannel(networkId: String, channelId: Int)
+
+    @Query("SELECT * FROM mesh_messages WHERE networkId = :networkId AND (text LIKE '%' || :query || '%' OR senderDisplayName LIKE '%' || :query || '%') AND senderId NOT IN (SELECT authorId FROM muted_authors) ORDER BY createdAt DESC LIMIT 100")
+    fun searchMessages(networkId: String, query: String): Flow<List<MeshMessageEntity>>
 
     @Query("SELECT * FROM mesh_messages WHERE messageId = :messageId LIMIT 1")
     suspend fun getMessageById(messageId: String): MeshMessageEntity?
@@ -116,4 +131,22 @@ interface NodeAuthDao {
 
     @Query("DELETE FROM node_authorizations WHERE nodeId = :nodeId AND networkId = :networkId")
     suspend fun revokeNode(nodeId: String, networkId: String)
+}
+
+@Dao
+interface MutedAuthorDao {
+    @Query("SELECT * FROM muted_authors ORDER BY mutedAt DESC")
+    fun observeMutedAuthors(): Flow<List<MutedAuthorEntity>>
+
+    @Query("SELECT authorId FROM muted_authors")
+    suspend fun getMutedAuthorIds(): List<String>
+
+    @Query("SELECT COUNT(*) > 0 FROM muted_authors WHERE authorId = :authorId")
+    suspend fun isMuted(authorId: String): Boolean
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun muteAuthor(author: MutedAuthorEntity)
+
+    @Query("DELETE FROM muted_authors WHERE authorId = :authorId")
+    suspend fun unmuteAuthor(authorId: String)
 }

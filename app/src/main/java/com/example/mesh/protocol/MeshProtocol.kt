@@ -30,16 +30,23 @@ object MeshProtocol {
     const val TYPE_HOST_ANNOUNCEMENT = "HOST_ANNOUNCEMENT"
     const val TYPE_RELAY_ANNOUNCEMENT = "RELAY_ANNOUNCEMENT"
     const val TYPE_CLIENT_POST = "CLIENT_POST"
+    const val TYPE_ASSISTANCE_ALERT = "ASSISTANCE_ALERT"
     const val TYPE_CONTROL_NODE_APPROVAL = "CONTROL_NODE_APPROVAL"
     const val TYPE_CONTROL_NETWORK_SHUTDOWN = "CONTROL_NETWORK_SHUTDOWN"
     const val TYPE_CONTROL_HANDSHAKE = "CONTROL_HANDSHAKE"
     const val TYPE_CONTROL_HANDSHAKE_ACK = "CONTROL_HANDSHAKE_ACK"
     const val TYPE_CATCHUP_REQUEST = "CATCHUP_REQUEST"
     const val TYPE_CATCHUP_RESPONSE = "CATCHUP_RESPONSE"
+
+    // Channels (Section 1: #announcements, #general, #assistance)
+    const val CHANNEL_ANNOUNCEMENTS = 0
+    const val CHANNEL_GENERAL = 1
+    const val CHANNEL_ASSISTANCE = 2
 }
 
 /**
  * Immutable packet envelope for mesh propagation.
+ * Gateway-ready with channel partitioning, alerts, and optional location telemetry.
  */
 data class MeshPacket(
     val protocolVersion: Int = MeshProtocol.CURRENT_PROTOCOL_VERSION,
@@ -50,12 +57,17 @@ data class MeshPacket(
     val senderRole: NodeRole,
     val messageType: String,
     val priority: Int,
+    val channelId: Int = MeshProtocol.CHANNEL_GENERAL,
     val createdAt: Long = System.currentTimeMillis(),
     val expiresAt: Long = createdAt + MeshProtocol.DEFAULT_MESSAGE_TTL_MS,
     val hopLimit: Int,
     val currentHopCount: Int = 0,
     val text: String,
-    val originGrant: String? = null
+    val originGrant: String? = null,
+    val isAlert: Boolean = false,
+    val locationUri: String? = null,
+    val gatewayId: String? = null,
+    val transportOrigin: String = "MESH"
 ) {
     fun isExpired(now: Long = System.currentTimeMillis()): Boolean = now >= expiresAt
 
@@ -84,12 +96,17 @@ data class MeshPacket(
             put("srole", senderRole.name)
             put("type", messageType)
             put("prio", priority)
+            put("ch", channelId)
             put("cat", createdAt)
             put("exp", expiresAt)
             put("hlim", hopLimit)
             put("hcur", currentHopCount)
             put("txt", text)
             if (originGrant != null) put("grant", originGrant)
+            if (isAlert) put("alrt", true)
+            if (locationUri != null) put("loc", locationUri)
+            if (gatewayId != null) put("gw", gatewayId)
+            if (transportOrigin != "MESH") put("tor", transportOrigin)
         }
         return json.toString().toByteArray(Charsets.UTF_8)
     }
@@ -109,12 +126,17 @@ data class MeshPacket(
                 val srole = NodeRole.fromString(json.getString("srole"))
                 val type = json.getString("type")
                 val prio = json.getInt("prio")
+                val ch = json.optInt("ch", MeshProtocol.CHANNEL_GENERAL)
                 val cat = json.getLong("cat")
                 val exp = json.getLong("exp")
                 val hlim = json.getInt("hlim")
                 val hcur = json.getInt("hcur")
                 val txt = json.getString("txt")
                 val grant = if (json.has("grant")) json.getString("grant") else null
+                val alrt = json.optBoolean("alrt", false)
+                val loc = if (json.has("loc")) json.getString("loc") else null
+                val gw = if (json.has("gw")) json.getString("gw") else null
+                val tor = json.optString("tor", "MESH")
 
                 MeshPacket(
                     protocolVersion = version,
@@ -125,12 +147,17 @@ data class MeshPacket(
                     senderRole = srole,
                     messageType = type,
                     priority = prio,
+                    channelId = ch,
                     createdAt = cat,
                     expiresAt = exp,
                     hopLimit = hlim,
                     currentHopCount = hcur,
                     text = txt,
-                    originGrant = grant
+                    originGrant = grant,
+                    isAlert = alrt,
+                    locationUri = loc,
+                    gatewayId = gw,
+                    transportOrigin = tor
                 )
             } catch (_: Exception) {
                 null
@@ -142,7 +169,9 @@ data class MeshPacket(
             hostId: String,
             hostName: String,
             text: String,
-            grant: String? = null
+            channelId: Int = MeshProtocol.CHANNEL_ANNOUNCEMENTS,
+            grant: String? = null,
+            locationUri: String? = null
         ): MeshPacket {
             val truncated = if (text.length > MeshProtocol.MAX_TEXT_LENGTH) text.substring(0, MeshProtocol.MAX_TEXT_LENGTH) else text
             return MeshPacket(
@@ -152,9 +181,11 @@ data class MeshPacket(
                 senderRole = NodeRole.HOST,
                 messageType = MeshProtocol.TYPE_HOST_ANNOUNCEMENT,
                 priority = MeshProtocol.PRIORITY_HOST,
+                channelId = channelId,
                 hopLimit = MeshProtocol.HOP_LIMIT_HOST,
                 text = truncated,
-                originGrant = grant
+                originGrant = grant,
+                locationUri = locationUri
             )
         }
 
@@ -163,7 +194,9 @@ data class MeshPacket(
             nodeId: String,
             nodeName: String,
             text: String,
-            grant: String? = null
+            channelId: Int = MeshProtocol.CHANNEL_ANNOUNCEMENTS,
+            grant: String? = null,
+            locationUri: String? = null
         ): MeshPacket {
             val truncated = if (text.length > MeshProtocol.MAX_TEXT_LENGTH) text.substring(0, MeshProtocol.MAX_TEXT_LENGTH) else text
             return MeshPacket(
@@ -173,9 +206,11 @@ data class MeshPacket(
                 senderRole = NodeRole.RELAY_NODE,
                 messageType = MeshProtocol.TYPE_RELAY_ANNOUNCEMENT,
                 priority = MeshProtocol.PRIORITY_RELAY,
+                channelId = channelId,
                 hopLimit = MeshProtocol.HOP_LIMIT_RELAY,
                 text = truncated,
-                originGrant = grant
+                originGrant = grant,
+                locationUri = locationUri
             )
         }
 
@@ -183,7 +218,9 @@ data class MeshPacket(
             networkId: String,
             clientId: String,
             clientName: String,
-            text: String
+            text: String,
+            channelId: Int = MeshProtocol.CHANNEL_GENERAL,
+            locationUri: String? = null
         ): MeshPacket {
             val truncated = if (text.length > MeshProtocol.MAX_TEXT_LENGTH) text.substring(0, MeshProtocol.MAX_TEXT_LENGTH) else text
             return MeshPacket(
@@ -193,8 +230,34 @@ data class MeshPacket(
                 senderRole = NodeRole.CLIENT,
                 messageType = MeshProtocol.TYPE_CLIENT_POST,
                 priority = MeshProtocol.PRIORITY_CLIENT,
+                channelId = channelId,
                 hopLimit = MeshProtocol.HOP_LIMIT_CLIENT, // max 3 hops
-                text = truncated
+                text = truncated,
+                locationUri = locationUri
+            )
+        }
+
+        fun createAssistanceAlert(
+            networkId: String,
+            senderId: String,
+            senderName: String,
+            senderRole: NodeRole,
+            text: String,
+            locationUri: String? = null
+        ): MeshPacket {
+            val truncated = if (text.length > MeshProtocol.MAX_TEXT_LENGTH) text.substring(0, MeshProtocol.MAX_TEXT_LENGTH) else text
+            return MeshPacket(
+                networkId = networkId,
+                senderId = senderId,
+                senderDisplayName = senderName,
+                senderRole = senderRole,
+                messageType = MeshProtocol.TYPE_ASSISTANCE_ALERT,
+                priority = MeshProtocol.PRIORITY_HOST, // Priority 1 for immediate propagation
+                channelId = MeshProtocol.CHANNEL_ASSISTANCE,
+                hopLimit = MeshProtocol.HOP_LIMIT_HOST,
+                text = truncated,
+                isAlert = true,
+                locationUri = locationUri
             )
         }
 

@@ -34,7 +34,8 @@ class MeshTypeConverters {
         MeshMessageEntity::class,
         PendingQueueEntity::class,
         SeenMessageEntity::class,
-        NodeAuthorizationEntity::class
+        NodeAuthorizationEntity::class,
+        MutedAuthorEntity::class
     ],
     version = 1,
     exportSchema = false
@@ -47,6 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun pendingQueueDao(): PendingQueueDao
     abstract fun seenMessageDao(): SeenMessageDao
     abstract fun nodeAuthDao(): NodeAuthDao
+    abstract fun mutedAuthorDao(): MutedAuthorDao
 
     companion object {
         @Volatile
