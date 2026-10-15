@@ -1,0 +1,43 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="84dp"
+    android:height="84dp"
+    android:viewportWidth="84"
+    android:viewportHeight="84">
+
+    <!-- Inner connection rays from center node to community outer nodes -->
+    <path
+        android:pathData="M42,42 L42,18 M42,42 L63,51 M42,42 L22,55"
+        android:strokeColor="#60A5FA"
+        android:strokeAlpha="0.35"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
+
+    <!-- Outer mesh orbital ring arc -->
+    <path
+        android:pathData="M22,55 A24,24 0 1,1 63,51"
+        android:fillColor="#00000000"
+        android:strokeColor="#60A5FA"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+
+    <!-- Node 1: Green (Top) -->
+    <path
+        android:fillColor="#34D399"
+        android:pathData="M42,12.5a5.5,5.5 0 1,0 0.001,0z" />
+
+    <!-- Node 2: Amber (Bottom Right) -->
+    <path
+        android:fillColor="#FBBF24"
+        android:pathData="M63,45.5a5.5,5.5 0 1,0 0.001,0z" />
+
+    <!-- Node 3: Pink (Bottom Left) -->
+    <path
+        android:fillColor="#F472B6"
+        android:pathData="M22,49.5a5.5,5.5 0 1,0 0.001,0z" />
+
+    <!-- Central Node: Pure White -->
+    <path
+        android:fillColor="#F9FAFB"
+        android:pathData="M42,37a5,5 0 1,0 0.001,0z" />
+
+</vector>

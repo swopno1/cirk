@@ -1,0 +1,6 @@
+{
+  "name": "CIRK — Offline Mesh Network",
+  "description": "Your people. Your network. Anywhere. Offline-first peer-to-peer mesh messaging, community announcements, and multi-hop relaying without cellular or internet connectivity.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
